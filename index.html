@@ -167,6 +167,10 @@
   .add-match-form{ margin-top:24px;border-top:2px dashed var(--line);padding-top:18px; }
   .add-match-form .grid{ display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px; }
   .add-match-form input, .add-match-form select{ width:100%;padding:8px;border:1px solid var(--line);border-radius:6px;font-size:14px; }
+  .edit-form{background:#FBF8EF;border:1px dashed var(--gold);border-radius:10px;padding:12px;margin:4px 0 8px;}
+  .edit-form .egrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;}
+  .edit-form input{width:100%;padding:7px;border:1px solid var(--line);border-radius:6px;font-size:13px;}
+  .edit-form .ebtns{display:flex;gap:8px;margin-top:8px;}
 
   .modal-backdrop{ position:fixed;inset:0;background:rgba(11,61,46,0.85); display:flex;align-items:center;justify-content:center;padding:20px;z-index:50; }
   .modal-box{ background:#fff;border-radius:14px;padding:26px;max-width:360px;width:100%;text-align:center; }
@@ -347,6 +351,24 @@
       throw new Error("Supabase POST " + table + " -> " + res.status + " " + txt);
     }
     return true;
+  }
+  async function apiPatch(table, filter, data){
+    var url = REST + "/" + table + "?" + filter;
+    var res = await fetch(url, {
+      method: "PATCH",
+      headers: authHeaders({ "Prefer": "return=minimal" }),
+      body: JSON.stringify(data)
+    });
+    if(!res.ok){
+      var txt = await res.text().catch(function(){ return ""; });
+      throw new Error("Supabase PATCH " + table + " -> " + res.status + " " + txt);
+    }
+    return true;
+  }
+  function isoToLocalInput(iso){
+    var d = new Date(iso);
+    var gt = d.toLocaleString("sv-SE", {timeZone: TZ});
+    return gt.slice(0,16).replace(" ","T");
   }
 
   // ---------- app state ----------
@@ -661,11 +683,45 @@
         '<span>-</span>'+
         '<input type="number" min="0" max="20" id="raway_'+m.id+'" value="'+(r?r.away:'')+'">'+
         '<button class="btn secondary" data-save-result="'+m.id+'">Guardar</button>'+
+        '<button class="btn secondary" data-edit-match="'+m.id+'" title="Editar partido" style="background:#fff;border-color:var(--gold);color:#a07800;">✏️</button>'+
+      '</div>'+
+      '<div id="editform_'+m.id+'" class="edit-form hidden">'+
+        '<div style="font-size:12px;font-weight:700;color:var(--pitch-deep);margin-bottom:8px;">✏️ Editar partido</div>'+
+        '<div class="egrid">'+
+          '<input id="eHome_'+m.id+'" placeholder="Equipo local" value="'+escHtml(m.home)+'">'+
+          '<input id="eAway_'+m.id+'" placeholder="Equipo visitante" value="'+escHtml(m.away)+'">'+
+        '</div>'+
+        '<div class="egrid">'+
+          '<input id="ePhase_'+m.id+'" placeholder="Fase" value="'+escHtml(m.phase)+'">'+
+          '<input id="eGroup_'+m.id+'" placeholder="Referencia" value="'+escHtml(m.group)+'">'+
+        '</div>'+
+        '<input id="eDate_'+m.id+'" type="datetime-local" value="'+isoToLocalInput(m.iso)+'" style="width:100%;padding:7px;border:1px solid var(--line);border-radius:6px;font-size:13px;margin-bottom:4px;">'+
+        '<div style="font-size:11px;color:var(--muted);margin-bottom:6px;">Hora en Guatemala (CT)</div>'+
+        '<div class="ebtns">'+
+          '<button class="btn" data-save-edit="'+m.id+'">Guardar cambios</button>'+
+          '<button class="btn secondary" data-cancel-edit="'+m.id+'">Cancelar</button>'+
+        '</div>'+
       '</div>';
     });
     cont.innerHTML = html;
     Array.prototype.forEach.call(cont.querySelectorAll("[data-save-result]"), function(btn){
       btn.addEventListener("click", function(){ saveResult(btn.getAttribute("data-save-result")); });
+    });
+    Array.prototype.forEach.call(cont.querySelectorAll("[data-edit-match]"), function(btn){
+      btn.addEventListener("click", function(){
+        var id = btn.getAttribute("data-edit-match");
+        var form = document.getElementById("editform_"+id);
+        if(form){ form.classList.toggle("hidden"); }
+      });
+    });
+    Array.prototype.forEach.call(cont.querySelectorAll("[data-save-edit]"), function(btn){
+      btn.addEventListener("click", function(){ saveMatchEdit(btn.getAttribute("data-save-edit")); });
+    });
+    Array.prototype.forEach.call(cont.querySelectorAll("[data-cancel-edit]"), function(btn){
+      btn.addEventListener("click", function(){
+        var form = document.getElementById("editform_"+btn.getAttribute("data-cancel-edit"));
+        if(form){ form.classList.add("hidden"); }
+      });
     });
   }
 
@@ -681,6 +737,31 @@
       showToast("Resultado guardado.");
     }catch(e){
       showToast("No se pudo guardar, intenta de nuevo.", true);
+    }
+  }
+
+  function escHtml(s){ return String(s||"").replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+
+  async function saveMatchEdit(matchId){
+    var home  = document.getElementById("eHome_"+matchId).value.trim();
+    var away  = document.getElementById("eAway_"+matchId).value.trim();
+    var phase = document.getElementById("ePhase_"+matchId).value.trim();
+    var group = document.getElementById("eGroup_"+matchId).value.trim();
+    var dateVal = document.getElementById("eDate_"+matchId).value;
+    if(!home || !away || !dateVal){ showToast("Completa equipos y fecha/hora.", true); return; }
+    var iso = dateVal + ":00-06:00";
+    try{
+      await apiPatch("matches", "id=eq."+encodeURIComponent(matchId), {iso:iso, group_name:group, phase:phase, home:home, away:away});
+      var idx = -1;
+      for(var i=0;i<state.matches.length;i++){ if(state.matches[i].id===matchId){ idx=i; break; } }
+      if(idx>=0) state.matches[idx] = {id:matchId, iso:iso, group:group, phase:phase, home:home, away:away};
+      state.matches.sort(function(a,b){ return new Date(a.iso)-new Date(b.iso); });
+      renderAdminMatches();
+      renderMatches();
+      renderNextMatch();
+      showToast("Partido actualizado ✓");
+    }catch(e){
+      showToast("No se pudo actualizar: "+(e&&e.message?e.message:e), true);
     }
   }
 
