@@ -372,7 +372,7 @@
   }
 
   // ---------- app state ----------
-  var state = { name:null, matches:[], results:{}, myPredictions:{} };
+  var state = { name:null, matches:[], results:{}, myPredictions:{}, unlockedMatches:{} };
 
   function fmtDay(iso){
     var d = new Date(iso);
@@ -384,7 +384,10 @@
     return d.toLocaleTimeString("es-GT",{timeZone:TZ, hour:"numeric", minute:"2-digit"});
   }
   function dayKey(iso){ return new Date(iso).toLocaleDateString("en-CA",{timeZone:TZ}); }
-  function isLocked(iso){ return Date.now() >= new Date(iso).getTime(); }
+  function isLocked(iso, matchId){
+    if(matchId && state.unlockedMatches[matchId]) return false;
+    return Date.now() >= new Date(iso).getTime();
+  }
 
   function computePoints(pred, result){
     if(!pred || !result) return null;
@@ -527,7 +530,7 @@
     cont.innerHTML = html;
 
     state.matches.forEach(function(m){
-      if(isLocked(m.iso)) return;
+      if(isLocked(m.iso, m.id)) return;
       var hi = document.getElementById("home_"+m.id);
       var ai = document.getElementById("away_"+m.id);
       if(hi) hi.addEventListener("change", function(){ savePrediction(m.id); });
@@ -536,11 +539,13 @@
   }
 
   function matchCardHTML(m){
-    var locked = isLocked(m.iso);
+    var adminOpen = !!state.unlockedMatches[m.id];
+    var locked = isLocked(m.iso, m.id);
     var result = state.results[m.id];
     var pred = state.myPredictions[m.id];
     var statusPill, statusLabel;
     if(result){ statusPill="status-done"; statusLabel="Finalizado"; }
+    else if(adminOpen){ statusPill="status-open"; statusLabel="🔓 Abierto por admin"; }
     else if(locked){ statusPill="status-closed"; statusLabel="Cerrado"; }
     else { statusPill="status-open"; statusLabel="Abierto"; }
 
@@ -677,12 +682,14 @@
     var html = "";
     state.matches.forEach(function(m){
       var r = state.results[m.id];
+      var unlocked = !!state.unlockedMatches[m.id];
       html += '<div class="admin-row">'+
         '<div class="teams">'+flag(m.home)+' '+m.home+' vs '+m.away+' '+flag(m.away)+'<div class="meta">'+m.group+' · '+m.phase+' · '+fmtDay(m.iso)+' '+fmtTime(m.iso)+'</div></div>'+
         '<input type="number" min="0" max="20" id="rhome_'+m.id+'" value="'+(r?r.home:'')+'">'+
         '<span>-</span>'+
         '<input type="number" min="0" max="20" id="raway_'+m.id+'" value="'+(r?r.away:'')+'">'+
         '<button class="btn secondary" data-save-result="'+m.id+'">Guardar</button>'+
+        '<button class="btn secondary" data-unlock-match="'+m.id+'" title="Desbloquear predicciones" style="background:'+(unlocked?'#E4F3EA':'#fff')+';border-color:'+(unlocked?'var(--pitch-bright)':'var(--line)')+';color:'+(unlocked?'var(--pitch-bright)':'var(--muted)');+'">🔓</button>'+
         '<button class="btn secondary" data-edit-match="'+m.id+'" title="Editar partido" style="background:#fff;border-color:var(--gold);color:#a07800;">✏️</button>'+
       '</div>'+
       '<div id="editform_'+m.id+'" class="edit-form hidden">'+
@@ -706,6 +713,20 @@
     cont.innerHTML = html;
     Array.prototype.forEach.call(cont.querySelectorAll("[data-save-result]"), function(btn){
       btn.addEventListener("click", function(){ saveResult(btn.getAttribute("data-save-result")); });
+    });
+    Array.prototype.forEach.call(cont.querySelectorAll("[data-unlock-match]"), function(btn){
+      btn.addEventListener("click", function(){
+        var id = btn.getAttribute("data-unlock-match");
+        if(state.unlockedMatches[id]){
+          delete state.unlockedMatches[id];
+          showToast("Partido cerrado nuevamente 🔒");
+        } else {
+          state.unlockedMatches[id] = true;
+          showToast("Partido desbloqueado — ya pueden predecir 🔓");
+        }
+        renderAdminMatches();
+        renderMatches();
+      });
     });
     Array.prototype.forEach.call(cont.querySelectorAll("[data-edit-match]"), function(btn){
       btn.addEventListener("click", function(){
